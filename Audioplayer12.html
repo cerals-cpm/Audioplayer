@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPHERE EQ</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { background: #030303; color: white; font-family: sans-serif; overflow: hidden; }
+        .glass { background: rgba(255, 255, 255, 0.02); backdrop-filter: blur(30px); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 2.5rem; }
+        .water-drop { background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 50px; cursor: pointer; transition: 0.3s; }
+        .water-drop:hover { background: rgba(255, 255, 255, 0.08); }
+        .active-btn { background: #ffffff !important; color: black; box-shadow: 0 0 20px rgba(255,255,255,0.4); }
+        .liquid-slider { -webkit-appearance: none; width: 6px; height: 180px; background: rgba(255,255,255,0.05); border-radius: 5px; appearance: slider-vertical; writing-mode: bt-lr; }
+        .liquid-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; background: #fff; border-radius: 50%; cursor: pointer; }
+        #seekSlider { -webkit-appearance: none; width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; }
+        #seekSlider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: white; border-radius: 50%; cursor: pointer; }
+        #canvas-visualizer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; }
+        
+        /* Benachrichtigungen */
+        #notification-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 380px;
+            pointer-events: none;
+        }
+        .toast {
+            pointer-events: auto;
+            background: rgba(15, 15, 15, 0.92);
+            backdrop-filter: blur(25px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 4px solid #ef4444;
+            padding: 14px 18px;
+            border-radius: 1rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+            transition: all 0.4s ease;
+            opacity: 0;
+            transform: translateX(50px);
+        }
+        .toast.show { opacity: 1; transform: translateX(0); }
+        .toast-info { border-left-color: #3b82f6; }
+        .toast-success { border-left-color: #10b981; }
+        .toast-warning { border-left-color: #f59e0b; }
+
+        /* Bild-in-Bild Container */
+        .pip-container {
+            position: relative;
+            width: 100%;
+            height: 110px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 1.25rem;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body class="p-8 flex flex-col items-center justify-center min-h-screen">
+    <canvas id="canvas-visualizer"></canvas>
+
+    <!-- Notification Container -->
+    <div id="notification-container"></div>
+
+    <div class="z-10 w-full max-w-5xl glass p-10 shadow-2xl">
+        <h1 class="text-xs font-bold text-center mb-10 tracking-[0.4em] text-white/30 uppercase">SPHERE EQ</h1>
+        
+        <!-- Eingabe & Player Container -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div class="flex flex-col gap-3">
+                <input type="file" id="audioUpload" class="w-full p-4 bg-white/5 rounded-2xl border border-white/5 text-[9px] text-white/30 uppercase tracking-widest cursor-pointer" title="Lokale Audio-Datei laden">
+                
+                <div class="flex gap-2">
+                    <input type="text" id="ytUrlInput" placeholder="YouTube Playlist oder Video Link" class="w-full p-4 bg-white/5 rounded-2xl border border-white/5 text-[10px] text-white/90 focus:outline-none focus:border-white/20 placeholder:text-white/20">
+                    <button id="loadBtn" onclick="loadYouTubeFromInput()" class="water-drop px-6 text-[9px] font-bold uppercase tracking-widest whitespace-nowrap">LADEN</button>
+                </div>
+            </div>
+
+            <!-- Bild-in-Bild Player -->
+            <div class="pip-container">
+                <iframe id="ytIframe" class="w-full h-full border-0 relative z-10" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+                <div id="pipOverlay" class="absolute inset-0 flex items-center justify-center bg-black/90 pointer-events-none z-20">
+                    <span class="text-[9px] text-white/40 uppercase tracking-widest text-center px-4">Kein Media geladen</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="eq-container" class="flex justify-between overflow-x-auto pb-8 mb-4"></div>
+        <div class="flex flex-col gap-3 mb-10">
+            <input type="range" id="seekSlider" value="0">
+            <div class="flex justify-between text-[9px] text-white/30 uppercase tracking-widest">
+                <span id="currentTime">0:00</span><span id="duration">0:00</span>
+            </div>
+        </div>
+        <!-- Hauptsteuerung (Erweitert um Repeat-Knopf im Grid) -->
+        <div class="grid grid-cols-2 md:grid-cols-7 gap-4 mb-8">
+            <button onclick="rewind()" class="water-drop p-4 text-[10px]">◀◀</button>
+            <button id="playBtn" onclick="togglePlay()" class="water-drop p-4 text-[10px] font-bold">▶︎</button>
+            <button onclick="forward()" class="water-drop p-4 text-[10px]">▶︎▶︎</button>
+            <button id="modeBtn" onclick="toggleMode()" class="water-drop p-4 text-[10px] uppercase font-bold tracking-widest">LIGHT SHOW</button>
+            <button onclick="resetEQ()" class="water-drop p-4 text-[10px]">EQ RESET</button>
+            <button id="repeatBtn" onclick="toggleRepeat()" class="water-drop p-4 text-[10px] uppercase font-bold tracking-widest">REPEAT</button>
+            <div class="flex flex-col items-center">
+                <span class="text-[8px] text-white/30 uppercase mb-1">VOLUME</span>
+                <input type="range" id="volSlider" min="0" max="1" step="0.01" value="0.8" class="w-full bg-white/10 rounded-full cursor-pointer">
+            </div>
+        </div>
+        <div class="grid grid-cols-4 gap-4">
+            <button id="surrBtn" onclick="toggleEffect('surrBtn', 'surround')" class="water-drop p-4 text-[10px] font-bold uppercase">3D AUDIO</button>
+            <button id="bassBtn" onclick="toggleEffect('bassBtn', 'bass')" class="water-drop p-4 text-[10px] font-bold uppercase">ULTRA BASS</button>
+            <button id="hqBtn" onclick="toggleEffect('hqBtn', 'hq')" class="water-drop p-4 text-[10px] font-bold uppercase">HIGH QUALITY</button>
+            <button id="maxBtn" onclick="toggleEffect('maxBtn', 'max')" class="water-drop p-4 text-[10px] font-bold uppercase">SOUND ANHEBUNG</button>
+        </div>
+    </div>
+    
+    <audio id="audioPlayer" crossorigin="anonymous"></audio>
+
+    <script>
+        // Audio Context Setup für lokale Dateien
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
+        const audio = document.getElementById('audioPlayer');
+        const source = audioCtx.createMediaElementSource(audio);
+        const analyzer = audioCtx.createAnalyser();
+        
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.value = 1.0; 
+        
+        const compressor = audioCtx.createDynamicsCompressor();
+        compressor.threshold.setValueAtTime(-3, audioCtx.currentTime);
+        compressor.knee.setValueAtTime(10, audioCtx.currentTime);
+        compressor.ratio.setValueAtTime(10, audioCtx.currentTime);
+        compressor.attack.setValueAtTime(0.005, audioCtx.currentTime);
+        compressor.release.setValueAtTime(0.1, audioCtx.currentTime);
+
+        const splitter = audioCtx.createChannelSplitter(2);
+        const merger = audioCtx.createChannelMerger(2);
+        const leftGain = audioCtx.createGain();
+        const rightGain = audioCtx.createGain();
+        const hqFilter = audioCtx.createBiquadFilter();
+        hqFilter.type = 'highshelf'; hqFilter.frequency.value = 10000;
+        
+        const bands = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+        const filters = bands.map(f => {
+            const filter = audioCtx.createBiquadFilter();
+            filter.type = 'peaking'; filter.frequency.value = f; filter.gain.value = 0;
+            return filter;
+        });
+
+        let lastNode = source;
+        filters.forEach(f => { lastNode.connect(f); lastNode = f; });
+        lastNode.connect(hqFilter).connect(splitter);
+        splitter.connect(leftGain, 0); splitter.connect(rightGain, 1);
+        leftGain.connect(merger, 0, 0); rightGain.connect(merger, 0, 1);
+        merger.connect(analyzer).connect(gainNode).connect(compressor).connect(audioCtx.destination);
+
+        const canvas = document.getElementById('canvas-visualizer');
+        const ctx = canvas.getContext('2d', { alpha: false });
+        let mode = 'bars';
+        analyzer.fftSize = 256;
+
+        let activeSource = 'local';
+        let isYtPlaying = false;
+        let isRepeatActive = false;
+
+        // Start-Benachrichtigung direkt beim Laden anzeigen
+        window.addEventListener('DOMContentLoaded', () => {
+            setTimeout(() => {
+                notify("Hinweis", "Toneinstellungen des Equalizers wirken sich nur auf Audiodateien aus, nicht aber auf das YouTube Fenster.", "info");
+            }, 600);
+        });
+
+        function render() {
+            const data = new Uint8Array(analyzer.frequencyBinCount);
+
+            if (activeSource === 'local') {
+                analyzer.getByteFrequencyData(data);
+            } else if (activeSource === 'youtube') {
+                // Keine Visualizer-Bewegung bei YouTube (Array bleibt leer/0)
+                data.fill(0);
+            }
+
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            ctx.fillStyle = '#030303'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            if (mode === 'ocean') {
+                ctx.filter = 'blur(80px)';
+                for (let i = 0; i < 6; i++) {
+                    ctx.fillStyle = `hsla(${(Date.now()/50 + i * 70) % 360}, 50%, 50%, 0.25)`;
+                    ctx.beginPath();
+                    ctx.arc(canvas.width/2 + Math.sin(Date.now()/2000 + i)*250, canvas.height/2 + Math.cos(Date.now()/2000 + i)*250, (data[i*10]/255)*600, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            } else {
+                for(let i = 0; i < data.length; i++) {
+                    const h = (data[i] / 255) * canvas.height * 0.3;
+                    ctx.fillStyle = `rgba(255, 255, 255, 0.1)`;
+                    ctx.fillRect(i * (canvas.width / data.length), canvas.height - h, (canvas.width / data.length) - 2, h);
+                }
+            }
+            requestAnimationFrame(render);
+        }
+        render();
+
+        audio.addEventListener('loadedmetadata', () => {
+            if (activeSource === 'local') document.getElementById('duration').innerText = formatTime(audio.duration);
+        });
+        audio.addEventListener('timeupdate', () => {
+            if (activeSource === 'local') {
+                document.getElementById('currentTime').innerText = formatTime(audio.currentTime);
+                const val = (audio.currentTime / audio.duration) * 100 || 0;
+                const s = document.getElementById('seekSlider');
+                s.value = val; s.style.background = `linear-gradient(to right, #3b82f6 ${val}%, rgba(255,255,255,0.1) ${val}%)`;
+            }
+        });
+
+        function toggleEffect(id, type) {
+            const btn = document.getElementById(id); btn.classList.toggle('active-btn');
+            const active = btn.classList.contains('active-btn');
+            if(type === 'bass') { filters[0].gain.value = active ? 12 : 0; filters[1].gain.value = active ? 8 : 0; }
+            if(type === 'max') { 
+                gainNode.gain.value = active ? 3.0 : 1.0; 
+                if(active) notify("Sound Anhebung", "Lautstärke-Boost aktiviert.", "warning");
+            }
+            if(type === 'surround') { leftGain.gain.value = active ? 1.4 : 1; rightGain.gain.value = active ? 1.4 : 1; }
+            if(type === 'hq') { hqFilter.gain.value = active ? 8 : 0; }
+        }
+
+        document.getElementById('audioUpload').onchange = async (e) => { 
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                switchToSource('local');
+                
+                if (audioCtx.state === 'suspended') {
+                    await audioCtx.resume();
+                }
+                
+                audio.src = URL.createObjectURL(file); 
+                await audio.play(); 
+                document.getElementById('playBtn').innerText = '▐▐';
+                notify("Datei geladen", `Spiele lokale Datei: ${file.name}`, "success");
+            } catch(err) {
+                console.error(err);
+                notify("Upload-Fehler", err.message, "error");
+            }
+        };
+
+        function formatTime(s) { return isNaN(s) ? "0:00" : Math.floor(s/60) + ":" + String(Math.floor(s%60)).padStart(2, '0'); }
+        
+        function togglePlay() { 
+            if (activeSource === 'local') {
+                if (!audio.src) {
+                    notify("Keine Audioquelle", "Bitte wähle eine lokale Datei aus oder gib einen Link ein.", "warning");
+                    return;
+                }
+                if (audio.paused) {
+                    audioCtx.resume();
+                    audio.play();
+                    document.getElementById('playBtn').innerText = '▐▐';
+                } else {
+                    audio.pause();
+                    document.getElementById('playBtn').innerText = '▶︎';
+                }
+            } else if (activeSource === 'youtube') {
+                isYtPlaying = !isYtPlaying;
+                document.getElementById('playBtn').innerText = isYtPlaying ? '▐▐' : '▶︎';
+            }
+        }
+        
+        function rewind() { if (activeSource === 'local') audio.currentTime -= 10; }
+        function forward() { if (activeSource === 'local') audio.currentTime += 10; }
+        function resetEQ() { filters.forEach(f => f.gain.value = 0); document.querySelectorAll('.liquid-slider').forEach(s => s.value = 0); notify("EQ Reset", "Equalizer-Regler zurückgesetzt.", "info"); }
+        
+        // Repeat-Funktion für Dateien und YouTube
+        function toggleRepeat() {
+            isRepeatActive = !isRepeatActive;
+            const btn = document.getElementById('repeatBtn');
+            if (isRepeatActive) {
+                btn.classList.add('active-btn');
+                audio.loop = true;
+                notify("Repeat aktiv", "Wiederholung eingeschaltet.", "success");
+            } else {
+                btn.classList.remove('active-btn');
+                audio.loop = false;
+                notify("Repeat aus", "Wiederholung ausgeschaltet.", "info");
+            }
+            // Falls YouTube aktiv ist, URL mit/ohne Loop neu laden
+            if (activeSource === 'youtube') {
+                loadYouTubeFromInput(true);
+            }
+        }
+
+        document.getElementById('seekSlider').oninput = (e) => { 
+            if (activeSource === 'local') audio.currentTime = (e.target.value / 100) * audio.duration;
+        };
+        
+        document.getElementById('volSlider').oninput = (e) => {
+            audio.volume = parseFloat(e.target.value);
+        };
+
+        function toggleMode() { mode = (mode === 'bars') ? 'ocean' : 'bars'; document.getElementById('modeBtn').innerText = (mode === 'bars') ? 'LIGHT SHOW' : 'STRIPE REFLEX'; }
+
+        [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].forEach((f, i) => {
+            const div = document.createElement('div');
+            div.className = 'flex flex-col items-center';
+            div.innerHTML = `<input type="range" min="-10" max="10" value="0" class="liquid-slider" oninput="filters[${i}].gain.value = this.value">
+                             <span class="text-[7px] mt-4 text-white/10 uppercase tracking-widest">${f}Hz</span>`;
+            document.getElementById('eq-container').appendChild(div);
+        });
+
+        function switchToSource(source) {
+            activeSource = source;
+            const overlay = document.getElementById('pipOverlay');
+            if (source === 'local') {
+                isYtPlaying = false;
+                overlay.style.display = 'flex';
+                document.getElementById('ytIframe').src = '';
+            } else if (source === 'youtube') {
+                if (!audio.paused) audio.pause();
+                overlay.style.display = 'none';
+            }
+        }
+
+        document.getElementById('ytUrlInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                loadYouTubeFromInput();
+            }
+        });
+
+        function extractParams(url) {
+            if (!url) return null;
+            let playlistId = null;
+            let videoId = null;
+
+            const listMatch = url.match(/[?&]list=([^#&?]+)/);
+            if (listMatch && listMatch[1]) playlistId = listMatch[1];
+
+            const videoMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+            if (videoMatch && videoMatch[1]) videoId = videoMatch[1];
+
+            if (!playlistId && !videoId) return null;
+            return { playlistId, videoId };
+        }
+
+        function loadYouTubeFromInput(isReload = false) {
+            const input = document.getElementById('ytUrlInput');
+            const rawUrl = input.value ? input.value.trim() : '';
+            const params = extractParams(rawUrl);
+
+            if (!params) {
+                if (!isReload) {
+                    notify("Ungültiger Link", "Der Link enthält keine Playlist-ID ('list=...') oder Video-ID.", "error");
+                }
+                return;
+            }
+
+            switchToSource('youtube');
+            const iframe = document.getElementById('ytIframe');
+            isYtPlaying = true;
+            document.getElementById('playBtn').innerText = '▐▐';
+
+            // Sichere No-Cookie Domain zur Umgehung von Sperren
+            const instance = "https://www.youtube-nocookie.com";
+            const loopParam = isRepeatActive ? "&loop=1" : "";
+
+            if (params.playlistId) {
+                if (!isReload) notify("Playlist geladen", "Verbindung hergestellt.", "success");
+                iframe.src = `${instance}/embed/playlist?list=${encodeURIComponent(params.playlistId)}&autoplay=1${loopParam}`;
+            } else if (params.videoId) {
+                if (!isReload) notify("Video geladen", "Verbindung hergestellt.", "success");
+                let playlistParam = params.playlistId ? `&list=${params.playlistId}` : (isRepeatActive ? `&playlist=${params.videoId}` : "");
+                iframe.src = `${instance}/embed/${encodeURIComponent(params.videoId)}?autoplay=1${playlistParam}${loopParam}`;
+            }
+        }
+
+        function notify(title, message, type = 'error') {
+            const container = document.getElementById('notification-container');
+            const toast = document.createElement('div');
+            
+            let typeClass = 'toast-info';
+            if (type === 'error') typeClass = 'toast';
+            else if (type === 'success') typeClass = 'toast toast-success';
+            else if (type === 'warning') typeClass = 'toast toast-warning';
+
+            toast.className = typeClass;
+            toast.innerHTML = `
+                <div class="font-bold text-[11px] tracking-wider uppercase text-white/90 mb-1">${title}</div>
+                <div class="text-[10px] text-white/60 leading-relaxed">${message}</div>
+            `;
+
+            container.appendChild(toast);
+            setTimeout(() => toast.classList.add('show'), 10);
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 400);
+            }, 5500);
+        }
+    </script>
+</body>
+</html>
